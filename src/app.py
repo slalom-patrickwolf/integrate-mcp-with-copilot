@@ -5,14 +5,43 @@ A FastAPI application that enables Slalom consultants to register their
 capabilities and manage consulting expertise across the organization.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+import json
+import hashlib
 
 app = FastAPI(title="Slalom Capabilities Management API",
               description="API for managing consulting capabilities and consultant expertise")
+
+# Load practice lead credentials
+practice_leads_path = os.path.join(Path(__file__).parent, "practice_leads.json")
+if os.path.exists(practice_leads_path):
+    with open(practice_leads_path) as f:
+        practice_leads = json.load(f)["practice_leads"]
+else:
+    practice_leads = []
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def authenticate_user(username: str, password: str):
+    for lead in practice_leads:
+        if lead["username"] == username and lead["password_hash"] == hash_password(password):
+            return lead
+    return None
+
+def get_current_user(request: Request):
+    username = request.headers.get("X-Username")
+    password = request.headers.get("X-Password")
+    if not username or not password:
+        raise HTTPException(status_code=401, detail="Missing credentials")
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=403, detail="Invalid credentials")
+    return user
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
@@ -116,7 +145,7 @@ def get_capabilities():
 
 
 @app.post("/capabilities/{capability_name}/register")
-def register_for_capability(capability_name: str, email: str):
+def register_for_capability(capability_name: str, email: str, user=Depends(get_current_user)):
     """Register a consultant for a capability"""
     # Validate capability exists
     if capability_name not in capabilities:
@@ -125,20 +154,21 @@ def register_for_capability(capability_name: str, email: str):
     # Get the specific capability
     capability = capabilities[capability_name]
 
-    # Validate consultant is not already registered
-    if email in capability["consultants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Consultant is already registered for this capability"
-        )
-
-    # Add consultant
-    capability["consultants"].append(email)
-    return {"message": f"Registered {email} for {capability_name}"}
+    # Practice leads can register anyone; consultants can only self-register
+    if user["role"] == "practice_lead" or (user["role"] == "consultant" and user["username"] == email):
+        if email in capability["consultants"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Consultant is already registered for this capability"
+            )
+        capability["consultants"].append(email)
+        return {"message": f"Registered {email} for {capability_name}"}
+    else:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
 
 
 @app.delete("/capabilities/{capability_name}/unregister")
-def unregister_from_capability(capability_name: str, email: str):
+def unregister_from_capability(capability_name: str, email: str, user=Depends(get_current_user)):
     """Unregister a consultant from a capability"""
     # Validate capability exists
     if capability_name not in capabilities:
@@ -147,13 +177,14 @@ def unregister_from_capability(capability_name: str, email: str):
     # Get the specific capability
     capability = capabilities[capability_name]
 
-    # Validate consultant is registered
-    if email not in capability["consultants"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Consultant is not registered for this capability"
-        )
-
-    # Remove consultant
-    capability["consultants"].remove(email)
-    return {"message": f"Unregistered {email} from {capability_name}"}
+    # Practice leads can unregister anyone; consultants can only self-unregister
+    if user["role"] == "practice_lead" or (user["role"] == "consultant" and user["username"] == email):
+        if email not in capability["consultants"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Consultant is not registered for this capability"
+            )
+        capability["consultants"].remove(email)
+        return {"message": f"Unregistered {email} from {capability_name}"}
+    else:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")

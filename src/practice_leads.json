@@ -1,0 +1,16 @@
+{
+  "practice_leads": [
+    {
+      "username": "lead1",
+      "password_hash": "<hashed_password>",
+      "role": "practice_lead",
+      "practice_area": "Technology"
+    },
+    {
+      "username": "lead2",
+      "password_hash": "<hashed_password>",
+      "role": "practice_lead",
+      "practice_area": "Strategy"
+    }
+  ]
+}
